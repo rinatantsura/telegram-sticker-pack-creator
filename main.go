@@ -13,6 +13,9 @@ import (
 	"os/signal"
 )
 
+const telegramFileBaseURL = "https://api.telegram.org/file/bot%s/%s"
+const baseNameOfInputPhoto = "photo_%d.jpg"
+
 type InputConfig struct {
 	TelegramAPIKey string `json:"telegram_api_key"`
 	TelegramChatID string `json:"telegram_chat_id"`
@@ -23,12 +26,12 @@ func main() {
 	flag.Parse()
 	inputData, err := os.ReadFile(*inputFile)
 	if err != nil {
-		fmt.Println("Error reading input file")
+		panic("Error reading input file")
 	}
 
 	var inputConfig InputConfig
 	if err := json.Unmarshal(inputData, &inputConfig); err != nil {
-		fmt.Println("Error parsing input json")
+		panic("Error parsing input json")
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -40,14 +43,13 @@ func main() {
 
 	b, err := bot.New(inputConfig.TelegramAPIKey, opts...)
 	if err != nil {
-		fmt.Println("Error creating bot")
+		panic("Error creating bot")
 	}
 
 	b.Start(ctx)
 }
 
 func handler(ctx context.Context, b *bot.Bot, update *models.Update) {
-
 	if update.Message == nil || len(update.Message.Photo) == 0 {
 		_, err := b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: update.Message.Chat.ID,
@@ -63,28 +65,51 @@ func handler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	})
 	if err != nil {
 		fmt.Println("Error getting file info")
+		return
 	}
 
-	url := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", b.Token(), file.FilePath)
+	url := fmt.Sprintf(telegramFileBaseURL, b.Token(), file.FilePath)
 	fmt.Println(url)
 	resp, err := http.Get(url)
 	if err != nil {
 		fmt.Println("Error downloading file")
 		return
 	}
-	defer resp.Body.Close()
-
-	filename := fmt.Sprintf("photo_%d.jpg", update.Message.Date)
-	out, err := os.Create(filename)
-	if err != nil {
-		fmt.Println("Error creating file")
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			fmt.Println("Error closing response body")
+			return
+		}
+	}()
+	if resp.StatusCode != 200 {
+		fmt.Println("Error downloading file")
 		return
 	}
-	defer out.Close()
+
+	filename := fmt.Sprintf(baseNameOfInputPhoto, update.Message.Date)
+	out, err := os.Create(filename)
+	if err != nil {
+		fmt.Println("Error creating file", err)
+		return
+	}
+	defer func() {
+		if err := out.Close(); err != nil {
+			fmt.Println("Error closing output file")
+			return
+		}
+	}()
 
 	_, err = io.Copy(out, resp.Body)
 	if err != nil {
-		fmt.Println("Error copying file")
+		fmt.Println("Error copying file", err)
+		return
+	}
+	_, err = b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID: update.Message.Chat.ID,
+		Text:   "I got and saved your photo.",
+	})
+	if err != nil {
+		fmt.Println("Error sending message")
 		return
 	}
 
