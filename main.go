@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/go-telegram/bot"
@@ -17,30 +18,38 @@ import (
 	"path/filepath"
 )
 
-const telegramFileBaseURL = "https://api.telegram.org/file/bot%s/%s"
 const baseNameOfInputPhoto = "photo_%d.jpg"
-const chatGPTBaseURL = "https://api.openai.com/v1/images/edits"
-
-var InputPhotoName string
 
 type InputConfig struct {
-	TelegramAPIKey string `json:"telegram_api_key"`
-	TelegramChatID string `json:"telegram_chat_id"`
+	TelegramAPIKey      string `json:"telegram_api_key"`
+	TelegramChatID      string `json:"telegram_chat_id"`
+	ChatGPTAPIKey       string `json:"chat_gpt_api_key"`
+	TelegramFileBaseURL string `json:"telegram_file_base_url"`
+	ChatGPTBaseURL      string `json:"chat_gpt_base_url"`
+}
+
+type Handler struct {
+	ChatGPTClient
+	TelegramClient
+}
+
+type ChatGPTClient struct {
 	ChatGPTAPIKey  string `json:"chat_gpt_api_key"`
+	ChatGPTBaseURL string `json:"chat_gpt_base_url"`
 }
 
-type a struct {
-	ChatGPTAPIKey string `json:"chat_gpt_api_key"`
+type TelegramClient struct {
+	TelegramFileBaseURL string `json:"telegram_file_base_url"`
 }
 
-func (a a) handler(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h Handler) handler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if update.Message == nil || len(update.Message.Photo) == 0 {
 		_, err := b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: update.Message.Chat.ID,
 			Text:   "Please, send me a photo",
 		})
 		if err != nil {
-			fmt.Println("Error sending message:", err)
+			ProcessMessage(ctx, b, err, update.Message.Chat.ID)
 		}
 		return
 	}
@@ -48,44 +57,50 @@ func (a a) handler(ctx context.Context, b *bot.Bot, update *models.Update) {
 		FileID: update.Message.Photo[len(update.Message.Photo)-1].FileID,
 	})
 	if err != nil {
-		fmt.Println("Error getting file info:", err)
+		wrappedError := MsgGetFileFromTelegramChat.Wrap(err)
+		ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
 		return
 	}
 
-	url := fmt.Sprintf(telegramFileBaseURL, b.Token(), file.FilePath)
-	fmt.Println(url)
+	url := fmt.Sprintf(h.TelegramFileBaseURL, b.Token(), file.FilePath)
 	resp, err := http.Get(url)
 	if err != nil {
-		fmt.Println("Error downloading file:", err)
+		wrappedError := MsgInternalService.Wrap(err)
+		ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
 		return
 	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			fmt.Println("Error closing response body:", err)
+			wrappedError := MsgInternalService.Wrap(err)
+			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
 			return
 		}
 	}()
 	if resp.StatusCode != 200 {
-		fmt.Println("Error downloading file")
+		wrappedError := MsgInternalService.Wrap(ErrBadStatusCodeTelegram)
+		ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
 		return
 	}
 
-	InputPhotoName = fmt.Sprintf(baseNameOfInputPhoto, update.Message.Date)
-	out, err := os.Create(InputPhotoName)
+	inputPhotoName := fmt.Sprintf(baseNameOfInputPhoto, update.Message.Date)
+	out, err := os.Create(inputPhotoName)
 	if err != nil {
-		fmt.Println("Error creating file:", err)
+		wrappedError := MsgProcessFile.Wrap(err)
+		ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
 		return
 	}
 	defer func() {
 		if err = out.Close(); err != nil {
-			fmt.Println("Error closing output file:", err)
+			wrappedError := MsgProcessFile.Wrap(err)
+			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
 			return
 		}
 	}()
 
 	_, err = io.Copy(out, resp.Body)
 	if err != nil {
-		fmt.Println("Error copying file:", err)
+		wrappedError := MsgSaveFile.Wrap(err)
+		ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
 		return
 	}
 	_, err = b.SendMessage(ctx, &bot.SendMessageParams{
@@ -93,13 +108,44 @@ func (a a) handler(ctx context.Context, b *bot.Bot, update *models.Update) {
 		Text:   "I got and saved your photo.",
 	})
 	if err != nil {
-		fmt.Println("Error sending message:", err)
-		return
+		ProcessMessage(ctx, b, err, update.Message.Chat.ID)
 	}
 
-	fmt.Println("Saved photo", InputPhotoName)
+	err = photoProcessingChatGPT(h.ChatGPTAPIKey, inputPhotoName, h.ChatGPTBaseURL)
 
-	photoProcessingChatGPT(a.ChatGPTAPIKey, InputPhotoName)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrProcessFile):
+			wrappedError := MsgProcessFile.Wrap(err)
+			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
+			return
+		case errors.Is(err, ErrMultipartCreatePart), errors.Is(err, ErrMultipartCreatePart):
+			wrappedError := MsgMultipartCreate.Wrap(err)
+			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
+			return
+		case errors.Is(err, ErrCloseFile):
+			wrappedError := MsgInternalFileErr.Wrap(err)
+			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
+			return
+		case errors.Is(err, ErrCreateRequestChatGPT), errors.Is(err, ErrSendRequestChatGPT), errors.Is(err, ErrBadStatusCodeChatGPT):
+			wrappedError := MsgRequestChatGPT.Wrap(err)
+			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
+			return
+		case errors.Is(err, ErrJSONDecode):
+			wrappedError := MsgJSONDecode.Wrap(err)
+			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
+			return
+		case errors.Is(err, ErrNoImageReturned):
+			wrappedError := MsgNoImageReturned.Wrap(err)
+			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
+			return
+		case errors.Is(err, ErrBase64Decode), errors.Is(err, ErrWriteFile):
+			wrappedError := MsgSaveFile.Wrap(err)
+			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
+			return
+		}
+	}
+
 }
 
 func main() {
@@ -118,11 +164,12 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	a := a{
-		ChatGPTAPIKey: inputConfig.ChatGPTAPIKey,
+	h := Handler{
+		ChatGPTClient:  ChatGPTClient{ChatGPTAPIKey: inputConfig.ChatGPTAPIKey, ChatGPTBaseURL: inputConfig.ChatGPTBaseURL},
+		TelegramClient: TelegramClient{TelegramFileBaseURL: inputConfig.TelegramFileBaseURL},
 	}
 	opts := []bot.Option{
-		bot.WithDefaultHandler(a.handler),
+		bot.WithDefaultHandler(h.handler),
 	}
 
 	b, err := bot.New(inputConfig.TelegramAPIKey, opts...)
@@ -133,15 +180,12 @@ func main() {
 	b.Start(ctx)
 }
 
-func photoProcessingChatGPT(apiKey string, imgPath string) {
+func photoProcessingChatGPT(apiKey string, imgPath string, baseURL string) error {
 	imgFile, err := os.Open(imgPath)
 	if err != nil {
-		fmt.Println("Error opening image:", err)
-		return
+		return fmt.Errorf("%w: %v", ErrProcessFile, err)
 	}
 	defer imgFile.Close()
-
-	fmt.Println("Opened:", imgPath)
 
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
@@ -155,63 +199,51 @@ func photoProcessingChatGPT(apiKey string, imgPath string) {
 		"Content-Disposition": {fmt.Sprintf(`form-data; name="image"; filename="%s"`, filepath.Base(imgPath))},
 		"Content-Type":        {"image/jpeg"},
 	})
-
 	if err != nil {
-		fmt.Println("Error creating form file:", err)
-		return
+		return fmt.Errorf("%w: %v", ErrMultipartCreatePart, err)
 	}
 	if _, err = io.Copy(imgPart, imgFile); err != nil {
-		fmt.Println("Error copying image:", err)
-		return
+		return fmt.Errorf("%w: %v", ErrMultipartWriteFile, err)
 	}
 
 	if err = writer.Close(); err != nil {
-		fmt.Println("Error closing writer:", err)
-		return
+		return fmt.Errorf("%w: %v", ErrCloseFile, err)
 	}
 
-	req, err := http.NewRequest("POST", chatGPTBaseURL, &buf)
+	req, err := http.NewRequest("POST", baseURL, &buf)
 	if err != nil {
-		fmt.Println("Error creating request:", err)
-		return
+		return fmt.Errorf("%w: %v", ErrCreateRequestChatGPT, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		fmt.Println("Error sending request:", err)
-		return
+		return fmt.Errorf("%w: %v", ErrSendRequestChatGPT, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		fmt.Println("API error: ", resp.Status, string(body))
-		return
+		return fmt.Errorf("%w: status: %v,%s", ErrBadStatusCodeChatGPT, resp.Status, string(body))
 	}
 
 	var out imagesResponse
 	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		fmt.Println("Error decoding response:", err)
-		return
+		return fmt.Errorf("%w: %v", ErrJSONDecode, err)
 	}
 	if len(out.Data) == 0 || out.Data[0].B64JSON == "" {
-		fmt.Println("no image returned")
-		return
+		return fmt.Errorf("%w", ErrNoImageReturned)
 	}
 
 	bytesPNG, err := base64.StdEncoding.DecodeString(out.Data[0].B64JSON)
 	if err != nil {
-		fmt.Println("Error decoding base64:", err)
-		return
+		return fmt.Errorf("%w: %v", ErrBase64Decode, err)
 	}
 	if err = os.WriteFile("dog_cutout.png", bytesPNG, 0644); err != nil {
-		fmt.Println("Error writing file:", err)
-		return
+		return fmt.Errorf("%w: %v", ErrWriteFile, err)
 	}
-
-	fmt.Println("Saved:", "dog_cutout.png")
+	return nil
 }
 
 type imagesResponse struct {
