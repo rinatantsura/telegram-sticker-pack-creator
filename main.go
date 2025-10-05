@@ -110,42 +110,45 @@ func (h Handler) handler(ctx context.Context, b *bot.Bot, update *models.Update)
 	if err != nil {
 		ProcessMessage(ctx, b, err, update.Message.Chat.ID)
 	}
-
-	err = photoProcessingChatGPT(h.ChatGPTAPIKey, inputPhotoName, h.ChatGPTBaseURL)
+	outputPhotoPath, err := photoProcessingChatGPT(h.ChatGPTAPIKey, inputPhotoName, h.ChatGPTBaseURL)
 
 	if err != nil {
 		switch {
-		case errors.Is(err, ErrProcessFile):
-			wrappedError := MsgProcessFile.Wrap(err)
-			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
-			return
-		case errors.Is(err, ErrMultipartCreatePart), errors.Is(err, ErrMultipartCreatePart):
-			wrappedError := MsgMultipartCreate.Wrap(err)
-			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
-			return
-		case errors.Is(err, ErrCloseFile):
-			wrappedError := MsgInternalFileErr.Wrap(err)
-			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
-			return
-		case errors.Is(err, ErrCreateRequestChatGPT), errors.Is(err, ErrSendRequestChatGPT), errors.Is(err, ErrBadStatusCodeChatGPT):
+		case errors.Is(err, ErrBadStatusCodeChatGPT):
 			wrappedError := MsgRequestChatGPT.Wrap(err)
 			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
 			return
-		case errors.Is(err, ErrJSONDecode):
-			wrappedError := MsgJSONDecode.Wrap(err)
-			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
-			return
-		case errors.Is(err, ErrNoImageReturned):
-			wrappedError := MsgNoImageReturned.Wrap(err)
-			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
-			return
-		case errors.Is(err, ErrBase64Decode), errors.Is(err, ErrWriteFile):
-			wrappedError := MsgSaveFile.Wrap(err)
-			ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
-			return
 		}
+		wrappedError := MsgInternalService.Wrap(err)
+		ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
+		return
+	}
+	openedFile, err := mustOpenFile(outputPhotoPath)
+	if err != nil {
+		wrappedError := MsgInternalService.Wrap(err)
+		ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
+		return
 	}
 
+	_, err = b.SendPhoto(ctx, &bot.SendPhotoParams{
+		ChatID: update.Message.Chat.ID,
+		Photo: &models.InputFileUpload{
+			Filename: outputPhotoPath,
+			Data:     openedFile,
+		},
+	})
+	if err != nil {
+		ProcessMessage(ctx, b, err, update.Message.Chat.ID)
+	}
+	return
+}
+
+func mustOpenFile(path string) (*os.File, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
 }
 
 func main() {
@@ -180,10 +183,10 @@ func main() {
 	b.Start(ctx)
 }
 
-func photoProcessingChatGPT(apiKey string, imgPath string, baseURL string) error {
+func photoProcessingChatGPT(apiKey string, imgPath string, baseURL string) (string, error) {
 	imgFile, err := os.Open(imgPath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrProcessFile, err)
+		return "", err
 	}
 	defer imgFile.Close()
 
@@ -200,50 +203,51 @@ func photoProcessingChatGPT(apiKey string, imgPath string, baseURL string) error
 		"Content-Type":        {"image/jpeg"},
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrMultipartCreatePart, err)
+		return "", err
 	}
 	if _, err = io.Copy(imgPart, imgFile); err != nil {
-		return fmt.Errorf("%w: %v", ErrMultipartWriteFile, err)
+		return "", err
 	}
 
 	if err = writer.Close(); err != nil {
-		return fmt.Errorf("%w: %v", ErrCloseFile, err)
+		return "", err
 	}
 
 	req, err := http.NewRequest("POST", baseURL, &buf)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCreateRequestChatGPT, err)
+		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSendRequestChatGPT, err)
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("%w: status: %v,%s", ErrBadStatusCodeChatGPT, resp.Status, string(body))
+		return "", fmt.Errorf("%w: status: %v,%s", ErrBadStatusCodeChatGPT, resp.Status, string(body))
 	}
 
 	var out imagesResponse
 	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return fmt.Errorf("%w: %v", ErrJSONDecode, err)
+		return "", err
 	}
 	if len(out.Data) == 0 || out.Data[0].B64JSON == "" {
-		return fmt.Errorf("%w", ErrNoImageReturned)
+		return "", err
 	}
 
 	bytesPNG, err := base64.StdEncoding.DecodeString(out.Data[0].B64JSON)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrBase64Decode, err)
+		return "", err
 	}
-	if err = os.WriteFile("dog_cutout.png", bytesPNG, 0644); err != nil {
-		return fmt.Errorf("%w: %v", ErrWriteFile, err)
+	outputPath := "dog_cutout.png"
+	if err = os.WriteFile(outputPath, bytesPNG, 0644); err != nil {
+		return "", err
 	}
-	return nil
+	return outputPath, nil
 }
 
 type imagesResponse struct {
