@@ -7,6 +7,7 @@ import (
 	chat_gpt "github.com/rinatantsura/telegram-sticker-pack-creator/internal/chat-gpt"
 	errors_internal "github.com/rinatantsura/telegram-sticker-pack-creator/internal/errors"
 	telegram_api "github.com/rinatantsura/telegram-sticker-pack-creator/internal/telegram-api"
+	"github.com/rs/zerolog/log"
 	"os"
 )
 
@@ -30,6 +31,7 @@ func (h Handler) Handler(ctx context.Context, b *bot.Bot, update *models.Update)
 		FileID: update.Message.Photo[len(update.Message.Photo)-1].FileID,
 	})
 	if err != nil {
+		log.Error().Err(err).Msg("Failed to download photo")
 		wrappedError := errors_internal.ErrInternalService.Wrap(err)
 		errors_internal.ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
 		return
@@ -46,12 +48,14 @@ func (h Handler) Handler(ctx context.Context, b *bot.Bot, update *models.Update)
 	outputPhotoPath, err := h.DeletePhotoBackground(ctx, inputPhotoName)
 
 	if err != nil {
+		log.Error().Err(err).Msg("Failed to delete photo background")
 		wrappedError := errors_internal.ErrInternalService.Wrap(err)
 		errors_internal.ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
 		return
 	}
 	openedFile, err := mustOpenFile(outputPhotoPath)
 	if err != nil {
+		log.Error().Err(err).Msg("Failed to open file")
 		wrappedError := errors_internal.ErrInternalService.Wrap(err)
 		errors_internal.ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
 		return

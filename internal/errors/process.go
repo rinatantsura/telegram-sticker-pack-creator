@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/go-telegram/bot"
+	"github.com/rs/zerolog/log"
 )
 
 func ProcessMessage(ctx context.Context, b *bot.Bot, err error, chatID int64) {
@@ -18,7 +19,7 @@ func ProcessMessage(ctx context.Context, b *bot.Bot, err error, chatID int64) {
 			Text:   fmt.Sprintf("Произошла ошибка:\n %s", e.CustomerMessage),
 		})
 		if errSendMessage != nil {
-			fmt.Printf("Fail to send errx message for customer: %s", errSendMessage.Error())
+			log.Error().Err(errSendMessage).Msg("Failed to send message to user")
 		}
 	} else {
 		errWrapped := ErrUnknow.Wrap(err)
