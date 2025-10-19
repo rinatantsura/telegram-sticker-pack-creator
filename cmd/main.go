@@ -32,7 +32,7 @@ func main() {
 	}
 	var inputConfig InputConfig
 	if err = json.Unmarshal(inputData, &inputConfig); err != nil {
-		panic(err)
+		log.Fatal().Err(err).Str("file", *inputFile).Msg("Failed to parse JSON config")
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -40,6 +40,10 @@ func main() {
 
 	clientTelegram := telegram_api.NewClient(inputConfig.TelegramFileBaseURL, inputConfig.TelegramAPIKey)
 	clientChatGPT := chat_gpt.NewClient(inputConfig.ChatGPTAPIKey, inputConfig.ChatGPTBaseURL)
+
+	log.Info().Str("telegram_base_url", clientTelegram.TelegramFileBaseURL).Msg("Telegram client initialized")
+
+	log.Info().Str("chatgpt_base_url", clientChatGPT.BaseURL).Msg("ChatGPT client initialized")
 
 	h := handlers.Handler{
 		ClientTelegram: telegram_api.ClientTelegram{TelegramFileBaseURL: clientTelegram.TelegramFileBaseURL, Token: clientTelegram.Token},
@@ -53,5 +57,9 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to initialize Telegram bot")
 	}
+	log.Info().Msg("Telegram bot successfully initialized")
+
 	b.Start(ctx)
+
+	log.Info().Msg("Bot started and listening for updates")
 }

@@ -34,6 +34,7 @@ func (c ClientChatGPT) DeletePhotoBackground(ctx context.Context, imgPath string
 		return "", err
 	}
 	defer imgFile.Close()
+	log.Info().Str("image path", imgPath).Msg("The file is opened for further editing")
 
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
@@ -55,6 +56,7 @@ func (c ClientChatGPT) DeletePhotoBackground(ctx context.Context, imgPath string
 		log.Error().Err(err).Msg("Failed to copy image file")
 		return "", err
 	}
+	log.Info().Msg("The file was copied successfully")
 
 	if err = writer.Close(); err != nil {
 		log.Error().Err(err).Msg("Failed to сlose writer")
@@ -80,6 +82,7 @@ func (c ClientChatGPT) DeletePhotoBackground(ctx context.Context, imgPath string
 		body, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("%w: status: %v,%s", errors.ErrBadStatusCodeChatGPT, resp.Status, string(body))
 	}
+	log.Info().Int("status_code", resp.StatusCode).Msg("Request to ChatGPT API succeeded")
 
 	var out imagesResponse
 	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -101,6 +104,8 @@ func (c ClientChatGPT) DeletePhotoBackground(ctx context.Context, imgPath string
 		log.Error().Err(err).Msg("Failed to write file")
 		return "", err
 	}
+	log.Info().Str("path", outputPath).Msg("File successfully saved")
+
 	return outputPath, nil
 }
 

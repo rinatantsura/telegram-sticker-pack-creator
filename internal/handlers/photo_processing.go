@@ -36,7 +36,16 @@ func (h Handler) Handler(ctx context.Context, b *bot.Bot, update *models.Update)
 		errors_internal.ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
 		return
 	}
+	log.Info().Msg("Photo successfully downloaded")
+
 	inputPhotoName, err := h.SavePhoto(file.FilePath, update.Message.Date)
+	if err != nil {
+		log.Error().Err(err).Str("file_path", file.FilePath).Msg("Failed to save photo locally")
+		wrappedError := errors_internal.ErrInternalService.Wrap(err)
+		errors_internal.ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
+		return
+	}
+	log.Info().Str("local_file", inputPhotoName).Msg("Photo saved locally")
 
 	_, err = b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: update.Message.Chat.ID,
@@ -53,6 +62,8 @@ func (h Handler) Handler(ctx context.Context, b *bot.Bot, update *models.Update)
 		errors_internal.ProcessMessage(ctx, b, wrappedError, update.Message.Chat.ID)
 		return
 	}
+	log.Info().Str("output_file", outputPhotoPath).Msg("Photo background removed successfully")
+
 	openedFile, err := mustOpenFile(outputPhotoPath)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to open file")
@@ -71,6 +82,7 @@ func (h Handler) Handler(ctx context.Context, b *bot.Bot, update *models.Update)
 	if err != nil {
 		errors_internal.ProcessMessage(ctx, b, err, update.Message.Chat.ID)
 	}
+	log.Info().Str("output_file", outputPhotoPath).Msg("Photo processed and sent successfully")
 	return
 }
 
