@@ -40,7 +40,7 @@ func (c ClientTelegram) SavePhoto(filePath string, datePhotoSaving int) (string,
 		body, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("%w: status: %v,%s", errors.ErrBadStatusCodeTelegram, resp.Status, string(body))
 	}
-	log.Info().Int("status_code", resp.StatusCode).Msg("Request to Telegram API succeeded")
+	log.Debug().Int("status_code", resp.StatusCode).Msg("Request to Telegram API succeeded")
 
 	inputPhotoName := fmt.Sprintf(baseNameOfInputPhoto, datePhotoSaving)
 	out, err := os.Create(inputPhotoName)

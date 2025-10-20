@@ -2,5 +2,6 @@
   "telegram_api_key": "<your telegram api key>",
   "chat_gpt_api_key": "<your chat gpt api key>",
   "telegram_file_base_url": "https://api.telegram.org/file/bot%Ks/%s",
-  "chat_gpt_base_url": "https://api.openai.com/v1/images/edits"
+  "chat_gpt_base_url": "https://api.openai.com/v1/images/edits",
+  "log_level": "<required logging level (e.g. debug, info, etc.)>"
 }

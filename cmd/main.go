@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"os"
 	"os/signal"
+	"strings"
 )
 
 type InputConfig struct {
@@ -20,10 +21,13 @@ type InputConfig struct {
 	ChatGPTAPIKey       string `json:"chat_gpt_api_key"`
 	TelegramFileBaseURL string `json:"telegram_file_base_url"`
 	ChatGPTBaseURL      string `json:"chat_gpt_base_url"`
+	LogLevel            string `json:"log_level"`
 }
 
 func main() {
-	log.Logger = log.Level(zerolog.InfoLevel)
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	log.Info().Msg("Starting application with default log level INFO")
+
 	var inputFile = flag.String("input", "", "Path to input json file")
 	flag.Parse()
 	inputData, err := os.ReadFile(*inputFile)
@@ -34,6 +38,14 @@ func main() {
 	if err = json.Unmarshal(inputData, &inputConfig); err != nil {
 		log.Fatal().Err(err).Str("file", *inputFile).Msg("Failed to parse JSON config")
 	}
+
+	level, err := zerolog.ParseLevel(strings.ToLower(inputConfig.LogLevel))
+	if err != nil {
+		level = zerolog.InfoLevel
+		log.Warn().Str("provided_level", inputConfig.LogLevel).Msg("Invalid log level, fallback to INFO")
+	}
+	zerolog.SetGlobalLevel(level)
+	log.Info().Str("level", level.String()).Msg("Log level configured")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
