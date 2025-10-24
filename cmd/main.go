@@ -30,22 +30,12 @@ func main() {
 
 	var inputFile = flag.String("input", "", "Path to input json file")
 	flag.Parse()
-	inputData, err := os.ReadFile(*inputFile)
+	inputConfig, err := readConfig(*inputFile)
 	if err != nil {
-		log.Fatal().Err(err).Str("file", *inputFile).Msg("Failed to read input file")
-	}
-	var inputConfig InputConfig
-	if err = json.Unmarshal(inputData, &inputConfig); err != nil {
-		log.Fatal().Err(err).Str("file", *inputFile).Msg("Failed to parse JSON config")
+		log.Fatal().Err(err).Msg("Failed to load input config")
 	}
 
-	level, err := zerolog.ParseLevel(strings.ToLower(inputConfig.LogLevel))
-	if err != nil {
-		level = zerolog.InfoLevel
-		log.Warn().Str("provided_level", inputConfig.LogLevel).Msg("Invalid log level, fallback to INFO")
-	}
-	zerolog.SetGlobalLevel(level)
-	log.Info().Str("level", level.String()).Msg("Log level configured")
+	setupLogger(inputConfig.LogLevel)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
@@ -53,9 +43,12 @@ func main() {
 	clientTelegram := telegram_api.NewClient(inputConfig.TelegramFileBaseURL, inputConfig.TelegramAPIKey)
 	clientChatGPT := chat_gpt.NewClient(inputConfig.ChatGPTAPIKey, inputConfig.ChatGPTBaseURL)
 
-	log.Info().Str("telegram_base_url", clientTelegram.TelegramFileBaseURL).Msg("Telegram client initialized")
-
-	log.Info().Str("chatgpt_base_url", clientChatGPT.BaseURL).Msg("ChatGPT client initialized")
+	log.Info().
+		Fields(map[string]interface{}{
+			"telegram_base_url": clientTelegram.TelegramFileBaseURL,
+			"chatgpt_base_url":  clientChatGPT.BaseURL,
+		}).
+		Msg("Clients initialized")
 
 	h := handlers.Handler{
 		ClientTelegram: telegram_api.ClientTelegram{TelegramFileBaseURL: clientTelegram.TelegramFileBaseURL, Token: clientTelegram.Token},
@@ -74,4 +67,26 @@ func main() {
 	b.Start(ctx)
 
 	log.Info().Msg("Bot started and listening for updates")
+}
+
+func readConfig(inputFile string) (*InputConfig, error) {
+	inputData, err := os.ReadFile(inputFile)
+	if err != nil {
+		log.Fatal().Err(err).Str("file", inputFile).Msg("Failed to read input file")
+	}
+	var inputConfig InputConfig
+	if err = json.Unmarshal(inputData, &inputConfig); err != nil {
+		log.Fatal().Err(err).Str("file", inputFile).Msg("Failed to parse JSON config")
+	}
+	return &inputConfig, nil
+}
+
+func setupLogger(logLevel string) {
+	level, err := zerolog.ParseLevel(strings.ToLower(logLevel))
+	if err != nil {
+		level = zerolog.InfoLevel
+		log.Warn().Str("provided_level", logLevel).Msg("Invalid log level, fallback to INFO")
+	}
+	zerolog.SetGlobalLevel(level)
+	log.Info().Str("level", level.String()).Msg("Log level configured")
 }
