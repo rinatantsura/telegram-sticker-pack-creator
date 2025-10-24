@@ -28,9 +28,7 @@ func main() {
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	log.Info().Msg("Starting application with default log level INFO")
 
-	var inputFile = flag.String("input", "", "Path to input json file")
-	flag.Parse()
-	inputConfig, err := readConfig(*inputFile)
+	inputConfig, err := readConfig()
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to load input config")
 	}
@@ -44,7 +42,7 @@ func main() {
 	clientChatGPT := chat_gpt.NewClient(inputConfig.ChatGPTAPIKey, inputConfig.ChatGPTBaseURL)
 
 	log.Info().
-		Fields(map[string]interface{}{
+		Fields(map[string]any{
 			"telegram_base_url": clientTelegram.TelegramFileBaseURL,
 			"chatgpt_base_url":  clientChatGPT.BaseURL,
 		}).
@@ -69,14 +67,16 @@ func main() {
 	log.Info().Msg("Bot started and listening for updates")
 }
 
-func readConfig(inputFile string) (*InputConfig, error) {
-	inputData, err := os.ReadFile(inputFile)
+func readConfig() (*InputConfig, error) {
+	var inputFile = flag.String("input", "", "Path to input json file")
+	flag.Parse()
+	inputData, err := os.ReadFile(*inputFile)
 	if err != nil {
-		log.Fatal().Err(err).Str("file", inputFile).Msg("Failed to read input file")
+		log.Fatal().Err(err).Str("file", *inputFile).Msg("Failed to read input file")
 	}
 	var inputConfig InputConfig
 	if err = json.Unmarshal(inputData, &inputConfig); err != nil {
-		log.Fatal().Err(err).Str("file", inputFile).Msg("Failed to parse JSON config")
+		log.Fatal().Err(err).Str("file", *inputFile).Msg("Failed to parse JSON config")
 	}
 	return &inputConfig, nil
 }
