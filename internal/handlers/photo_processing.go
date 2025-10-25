@@ -12,8 +12,15 @@ import (
 )
 
 type Handler struct {
-	telegram_api.ClientTelegram
-	chat_gpt.ClientChatGPT
+	TelegramClient telegram_api.ClientTelegram
+	ChatGPTClient  chat_gpt.ClientChatGPT
+}
+
+func New(telegram telegram_api.ClientTelegram, gpt chat_gpt.ClientChatGPT) Handler {
+	return Handler{
+		TelegramClient: telegram,
+		ChatGPTClient:  gpt,
+	}
 }
 
 func (h Handler) Handler(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -38,7 +45,7 @@ func (h Handler) Handler(ctx context.Context, b *bot.Bot, update *models.Update)
 	}
 	log.Debug().Msg("Photo successfully downloaded")
 
-	inputPhotoName, err := h.SavePhoto(file.FilePath, update.Message.Date)
+	inputPhotoName, err := h.TelegramClient.SavePhoto(file.FilePath, update.Message.Date)
 	if err != nil {
 		log.Error().Err(err).Str("file_path", file.FilePath).Msg("Failed to save photo locally")
 		wrappedError := errors_internal.ErrInternalService.Wrap(err)
@@ -54,7 +61,7 @@ func (h Handler) Handler(ctx context.Context, b *bot.Bot, update *models.Update)
 	if err != nil {
 		errors_internal.ProcessMessage(ctx, b, err, update.Message.Chat.ID)
 	}
-	outputPhotoPath, err := h.DeletePhotoBackground(ctx, inputPhotoName)
+	outputPhotoPath, err := h.ChatGPTClient.DeletePhotoBackground(ctx, inputPhotoName)
 
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to delete photo background")

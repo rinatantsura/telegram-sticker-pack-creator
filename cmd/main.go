@@ -43,15 +43,13 @@ func main() {
 
 	log.Info().
 		Fields(map[string]any{
-			"telegram_base_url": clientTelegram.TelegramFileBaseURL,
-			"chatgpt_base_url":  clientChatGPT.BaseURL,
+			"telegram_base_url": inputConfig.TelegramFileBaseURL,
+			"chatgpt_base_url":  inputConfig.ChatGPTBaseURL,
 		}).
 		Msg("Clients initialized")
 
-	h := handlers.Handler{
-		ClientTelegram: telegram_api.ClientTelegram{TelegramFileBaseURL: clientTelegram.TelegramFileBaseURL, Token: clientTelegram.Token},
-		ClientChatGPT:  chat_gpt.ClientChatGPT{APIKey: clientChatGPT.APIKey, BaseURL: clientChatGPT.BaseURL},
-	}
+	h := handlers.New(clientTelegram, clientChatGPT)
+
 	opts := []bot.Option{
 		bot.WithDefaultHandler(h.Handler),
 	}
